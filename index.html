@@ -124,6 +124,20 @@ details.how[open] summary::after{content:" –"}
 .lbList li .sw2{width:10px;height:10px;border-radius:3px}
 .lbList li.gap{display:block;text-align:center;color:var(--dim);padding:0}
 
+#timeStat{display:none}
+[data-match="1"] #timeStat{display:grid}
+[data-match="1"] .st-best{display:none}
+.val.warn{color:var(--danger)}
+.banner{position:absolute;inset:0;display:grid;place-content:center;justify-items:center;gap:10px;text-align:center;pointer-events:none;z-index:1;padding:12px}
+.banner b{font:800 clamp(48px,18vw,96px)/1 var(--font-display);text-shadow:0 0 30px rgba(70,220,255,.6)}
+.banner span{font-size:13px;color:var(--ink);background:rgba(5,10,20,.75);padding:6px 12px;border-radius:999px}
+.banner b:empty,.banner span:empty{display:none}
+[data-state="lobby"] #lobby{display:grid}
+.lbList.plain li{grid-template-columns:12px minmax(0,1fr) auto}
+.tag{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--amber)}
+.lobbycode{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border:1px solid rgba(255,176,32,.35);background:rgba(255,176,32,.07);border-radius:10px}
+.lobbycode b{font:800 24px/1 var(--font-display);letter-spacing:.16em;color:var(--amber)}
+
 /* phones: arena on top, room card and players underneath */
 @media (max-width:760px){
   .app{gap:6px}
@@ -147,12 +161,13 @@ details.how[open] summary::after{content:" –"}
 }
 </style>
 
-<main class="app" id="app" data-state="menu" data-lb="0">
+<main class="app" id="app" data-state="menu" data-lb="0" data-match="0">
   <header class="top">
     <div class="brand">Deepglow</div>
     <div class="stats">
       <div class="stat"><span class="lab">Score</span><span class="val" id="score">0</span></div>
-      <div class="stat"><span class="lab">Best</span><span class="val" id="best">0</span></div>
+      <div class="stat st-best"><span class="lab">Best</span><span class="val" id="best">0</span></div>
+      <div class="stat" id="timeStat"><span class="lab">Time left</span><span class="val" id="time">8:00</span></div>
     </div>
     <span class="dot" id="net" data-s="off" role="img" aria-label="Connection status" title="Offline"></span>
     <button class="chip" id="hdrLb" type="button">Top scores</button>
@@ -160,7 +175,9 @@ details.how[open] summary::after{content:" –"}
 
   <div class="play" id="playArea">
     <div class="stage" id="stage">
-      <div class="arena" id="arena"><canvas id="c" aria-label="Game arena"></canvas></div>
+      <div class="arena" id="arena"><canvas id="c" aria-label="Game arena"></canvas>
+        <div class="banner" id="banner" hidden><b id="bigText"></b><span id="smallText"></span></div>
+      </div>
     </div>
     <aside class="board" aria-label="Room and players">
       <div class="roomcard" id="roomCard" hidden>
@@ -231,6 +248,26 @@ details.how[open] summary::after{content:" –"}
       </section>
     </div>
 
+    <div class="overlay" id="lobby">
+      <section class="panel">
+        <h1 class="over">Waiting room</h1>
+        <div class="lobbycode">
+          <div class="field"><span class="lab">Room code</span><b id="lobbyCode">-----</b></div>
+          <button class="chip" id="copyCode2" type="button">Copy</button>
+        </div>
+        <div class="field">
+          <span class="lab" id="lobbyCount">1 of 5 joined</span>
+          <ol class="lbList plain" id="lobbyList"></ol>
+        </div>
+        <p class="note" id="waitNote"></p>
+        <p class="note">Matches last 8 minutes. If you crash you respawn and keep your score. Most apples wins.</p>
+        <div class="actions">
+          <button class="btn" id="startMatch" type="button">Start match</button>
+          <button class="btn ghost" id="leaveLobby" type="button">Leave room</button>
+        </div>
+      </section>
+    </div>
+
     <div class="overlay" id="over">
       <section class="panel">
         <h1 class="over" id="overTitle">Game over</h1>
@@ -238,9 +275,11 @@ details.how[open] summary::after{content:" –"}
           <div class="stat"><span class="lab">Score</span><span class="val small" id="rScore">0</span></div>
           <div class="stat"><span class="lab">Best</span><span class="val small" id="rBest">0</span></div>
         </div>
+        <ol class="lbList" id="finalList" hidden></ol>
         <p class="note" id="rRank"></p>
         <div class="actions">
           <button class="btn" id="again" type="button">Play again</button>
+          <button class="btn" id="toLobby" type="button" hidden>Back to lobby</button>
           <button class="btn ghost" id="overLb" type="button">Monthly top scores</button>
           <button class="btn ghost" id="menu" type="button">Main menu</button>
         </div>
@@ -276,7 +315,7 @@ var MODES={
 };
 var MODE_KEYS=['classic','portal','rush'];
 var TYPES=[['create','Create'],['join','Join'],['solo','Solo']];
-var IDLE_MS=5000,MAX_PLAYERS=5,MAX_APPLES=8;
+var IDLE_MS=5000,MAX_PLAYERS=5,MAX_APPLES=8,MATCH_MS=8*60*1000,COUNT_MS=3000;
 var FONT="'JetBrains Mono', ui-monospace, monospace";
 var TAU=Math.PI*2;
 
@@ -293,6 +332,7 @@ var myName='',myHue=HUES[0],best=0,selMode='classic',selType='create',createCode
 var mySince=0,myEaten=[],myFood=[],foodCache=[],etCache=0,hostTotal=0,wasHost=false,lastFoodSer='',lastFoodAt=0;
 var lobby=null,room=null,roomMode='classic',roomWrap=false,roomLabel='',connToken=0,connected=false,connecting=false,offFns=[];
 var tickAcc=0,size=300,cell=10,DPR=1,frameNo=0,visMap={};
+var mp=false,iCreated=false,matchOn=false,matchEnd=0,countEnd=0,curMid=null,lastMid=null,carry=0,deathMsg='';
 var db=null,user=null,uid=null,lbUnsub=null,lbDocs=[],lbMonth='',lbWritable=true,lbPending=null,lbBusy=false,lbErr=false,lbTab='classic';
 
 try{
@@ -315,6 +355,8 @@ function setState(s){state=s;appEl.setAttribute('data-state',s)}
 function ghost(p){return p&&p.catch?p.catch(function(){}):p}
 function sleep(ms){return new Promise(function(r){setTimeout(r,ms)})}
 function cfg(){return MODES[roomMode]||MODES.classic}
+function inGame(){return state==='play'||state==='dead'||state==='over'}
+function myScore(){return (carry+me.eaten)*10}
 
 createCode=randCode();
 
@@ -335,7 +377,7 @@ function decode(peer){
   var c=decodeCache.get(pr);
   if(c!==undefined)return c;
   var s=null;
-  if(pr.g===1){
+  if(pr.g===1||pr.g===0){
     var h=(typeof pr.h==='number'&&isFinite(pr.h))?Math.round(((pr.h%360)+360)%360):190;
     var cells=[],dir='r';
     if(pr.al===1&&Number.isInteger(pr.x)&&Number.isInteger(pr.y)&&pr.x>=0&&pr.x<N&&pr.y>=0&&pr.y<N&&typeof pr.m==='string'){
@@ -351,7 +393,8 @@ function decode(peer){
       }
     }
     s={
-      peer:peer.peer,sameTab:peer.sameTab,
+      peer:peer.peer,sameTab:peer.sameTab,g:pr.g,hs:pr.hs===1,
+      mid:(typeof pr.mid==='string'&&/^[a-z0-9]{3,12}$/.test(pr.mid))?pr.mid:null,
       name:cleanName(pr.n)||'Player',hue:h,
       alive:pr.al===1&&cells.length>0,
       score:(typeof pr.sc==='number'&&isFinite(pr.sc))?clamp(Math.floor(pr.sc),0,99999):0,
@@ -372,12 +415,34 @@ function getPlayers(){
   for(var i=0;i<ps.length;i++){
     var p=ps[i];
     if(p.kind!=='viewer')continue;
-    var s=decode(p);if(!s)continue;
+    var s=decode(p);if(!s||s.g!==1)continue;
     out.push({s:s,idle:!p.sameTab&&now-p.updatedAt>IDLE_MS});
   }
   return out;
 }
 function hasSelf(players){for(var i=0;i<players.length;i++)if(players[i].s.sameTab)return true;return false}
+/* everyone in the room, waiting (g=0) or playing (g=1) */
+function getMembers(){
+  var out=[];
+  if(!room)return out;
+  var ps=room.peers(),now=Date.now();
+  for(var i=0;i<ps.length;i++){
+    var p=ps[i];
+    if(p.kind!=='viewer')continue;
+    var s=decode(p);if(!s)continue;
+    out.push({s:s,idle:s.g===1&&!p.sameTab&&now-p.updatedAt>IDLE_MS});
+  }
+  if(!hasSelf(out))out.push({s:{peer:'~',sameTab:true,g:(state==='lobby'||state==='count')?0:1,hs:iCreated,mid:curMid,name:cleanName(myName)||'Player',hue:myHue,since:mySince,alive:false,score:0,cells:[],dir:'r',eaten:[],food:null,et:null},idle:false});
+  return out;
+}
+/* the room's creator runs the lobby; if they left, the earliest joiner does */
+function lobbyHost(ms){
+  var i,b=null,c;
+  for(i=0;i<ms.length;i++)if(ms[i].s.hs&&!ms[i].idle){b=ms[i];break}
+  if(b)return b;
+  for(i=0;i<ms.length;i++){c=ms[i];if(c.idle)continue;if(!b||c.s.since<b.s.since||(c.s.since===b.s.since&&c.s.peer<b.s.peer))b=c}
+  return b;
+}
 
 /* ---------- apples: the longest-present active player keeps them ---------- */
 function better(a,b){return !b||a.since<b.since||(a.since===b.since&&a.peer<b.peer)}
@@ -389,7 +454,7 @@ function hostInfo(players){
     c={since:pl.s.since,peer:pl.s.peer,isMe:pl.s.sameTab,food:pl.s.food,et:pl.s.et};
     if(better(c,bestC))bestC=c;
   }
-  if(state!=='menu'&&!hasSelf(players)){
+  if(inGame()&&!hasSelf(players)){
     c={since:mySince||Date.now(),peer:'~',isMe:true,food:null,et:null};
     if(better(c,bestC))bestC=c;
   }
@@ -442,7 +507,7 @@ function hostDuty(players){
   }
 }
 function orbsNow(players,hi){
-  var host=hi&&hi.isMe&&state!=='menu';
+  var host=hi&&hi.isMe&&inGame();
   var list;
   if(host)list=myFood;
   else{
@@ -469,11 +534,11 @@ function movesStr(){
 function syncPresence(){
   if(!room)return;
   var p;
-  if(state==='menu'){
-    p={g:0,n:cleanName(myName)||'Player',h:myHue,x:null,y:null,m:null,e:null,sc:null,al:null,since:null,f:null,et:null};
+  if(state==='menu'||state==='lobby'||state==='count'){
+    p={g:0,n:cleanName(myName)||'Player',h:myHue,since:mySince,hs:iCreated?1:null,mid:curMid,x:null,y:null,m:null,e:null,sc:null,al:null,f:null,et:null};
   }else{
     var h=me.body[0];
-    p={g:1,n:cleanName(myName)||'Player',h:myHue,since:mySince,al:me.alive?1:0,sc:me.eaten*10,e:myEaten.slice(),
+    p={g:1,n:cleanName(myName)||'Player',h:myHue,since:mySince,hs:iCreated?1:null,mid:curMid,al:me.alive?1:0,sc:myScore(),e:myEaten.slice(),
        x:me.alive?h.x:null,y:me.alive?h.y:null,m:me.alive?movesStr():null};
   }
   ghost(room.presence(p));
@@ -508,10 +573,68 @@ function spawnMe(){
 function startGame(){
   myName=cleanName($('name').value);save('name',myName);
   if(!mySince)mySince=Date.now();
+  carry=0;matchOn=false;
   spawnMe();
   tickAcc=0;
   setState('play');
   syncPresence();
+}
+function resetMatchState(){
+  matchOn=false;carry=0;curMid=null;deathMsg='';
+  myEaten=[];myFood=[];foodCache=[];etCache=0;hostTotal=0;wasHost=false;lastFoodSer='';
+  me.alive=false;
+}
+function beginCountdown(mid){
+  lastMid=mid;
+  countEnd=performance.now()+COUNT_MS;
+  setState('count');
+}
+function beginMatch(){
+  carry=0;matchOn=true;matchEnd=performance.now()+MATCH_MS;
+  spawnMe();tickAcc=0;
+  setState('play');
+  syncPresence();
+}
+/* host only: everyone must be in the lobby, at least 2 people */
+function startMatch(){
+  var ms=getMembers(),h=lobbyHost(ms);
+  if(!mp||!lobby||!h||!h.s.sameTab||ms.length<2)return;
+  for(var i=0;i<ms.length;i++)if(ms[i].s.g!==0)return;
+  curMid=Math.random().toString(36).slice(2,8);
+  if(curMid.length<3)curMid='m'+curMid+'xx';
+  ghost(lobby.presence({rc:myCode,md:roomMode,st:1}));
+  beginCountdown(curMid);
+  syncPresence();
+}
+function endMatch(){
+  matchOn=false;me.alive=false;
+  var sc=myScore();
+  if(sc>best){best=sc;save('best',best)}
+  $('rScore').textContent=sc;$('rBest').textContent=best;
+  $('rRank').textContent='';
+  $('again').hidden=true;$('toLobby').hidden=false;$('finalList').hidden=false;
+  $('menu').textContent='Leave room';
+  setState('over');
+  syncPresence();
+  submitScore(roomMode,sc);
+  renderFinal();updateRankNote();
+}
+function renderFinal(){
+  var pl=getPlayers(),list=[],i;
+  for(i=0;i<pl.length;i++)list.push({name:pl[i].s.name,hue:pl[i].s.hue,score:pl[i].s.sameTab?myScore():pl[i].s.score,me:pl[i].s.sameTab});
+  if(!hasSelf(pl))list.push({name:cleanName(myName)||'Player',hue:myHue,score:myScore(),me:true});
+  list.sort(function(a,b){return b.score-a.score});
+  var ol=$('finalList');ol.textContent='';
+  for(i=0;i<list.length&&i<MAX_PLAYERS;i++){
+    var it=list[i],li=document.createElement('li');if(it.me)li.className='me';
+    var rk=document.createElement('span');rk.className='rk';rk.textContent='#'+(i+1);
+    var sw=document.createElement('span');sw.className='sw2';sw.style.background='hsl('+it.hue+' 85% 58%)';
+    var nm=document.createElement('span');nm.className='nm';nm.textContent=it.name;
+    var sc=document.createElement('span');sc.textContent=it.score;
+    li.appendChild(rk);li.appendChild(sw);li.appendChild(nm);li.appendChild(sc);ol.appendChild(li);
+  }
+  var won=list.length>1&&list[0].me&&list[0].score>list[1].score;
+  $('overTitle').textContent=won?'You won the match':'Time is up';
 }
 function myRank(m){
   var list=lbEntries(m);
@@ -520,10 +643,20 @@ function myRank(m){
 }
 function die(reason,who){
   me.alive=false;
-  var sc=me.eaten*10;
+  var msg=reason==='wall'?'You hit the wall':reason==='self'?'You bit your own tail':'You crashed into '+who;
+  if(mp&&matchOn){
+    /* timed match: keep your score, respawn after a moment */
+    carry+=me.eaten;me.eaten=0;
+    deathMsg=msg;
+    setState('dead');syncPresence();
+    setTimeout(function(){if(state==='dead'&&matchOn){spawnMe();tickAcc=0;setState('play');syncPresence()}},1600);
+    return;
+  }
+  var sc=myScore();
   if(sc>best){best=sc;save('best',best)}
-  $('overTitle').textContent=reason==='wall'?'You hit the wall':reason==='self'?'You bit your own tail':'You crashed into '+who;
+  $('overTitle').textContent=msg;
   $('rScore').textContent=sc;$('rBest').textContent=best;
+  $('again').hidden=false;$('toLobby').hidden=true;$('finalList').hidden=true;
   $('menu').textContent=myCode?'Leave room':'Main menu';
   setState('dead');
   syncPresence();
@@ -573,9 +706,10 @@ function lobbyRooms(){
     var p=ps[i];if(p.kind!=='viewer')continue;
     var pr=p.presence;if(!pr||typeof pr!=='object')continue;
     var rc=pr.rc;if(typeof rc!=='string'||!/^[a-z0-9]{4,8}$/.test(rc))continue;
-    var e=map[rc]||(map[rc]={n:0,others:0,self:false,md:null});
+    var e=map[rc]||(map[rc]={n:0,others:0,self:false,md:null,st:false});
     e.n++;if(p.sameTab)e.self=true;else e.others++;
     if(typeof pr.md==='string'&&MODES[pr.md])e.md=pr.md;
+    if(pr.st===1)e.st=true;
   }
   return map;
 }
@@ -605,8 +739,9 @@ async function connect(code,mode){
 async function leaveRoom(){
   connToken++;offAll();
   if(room){try{await room.leave()}catch(e){}}
-  room=null;myCode='';mySince=0;visMap={};connecting=false;myFood=[];foodCache=[];
-  if(lobby)ghost(lobby.presence({rc:null,md:null}));
+  room=null;myCode='';mySince=0;visMap={};connecting=false;
+  mp=false;iCreated=false;lastMid=null;resetMatchState();
+  if(lobby)ghost(lobby.presence({rc:null,md:null,st:null}));
   updateNet();
 }
 function setMsg(t){$('startMsg').textContent=t||''}
@@ -636,6 +771,7 @@ async function enter(){
       if(!info){await sleep(700);info=lobbyRooms()[code]}
       if(!info||!info.md){setMsg('No room found for '+code.toUpperCase()+'. Check the code with the host.');return}
       if(info.others>=MAX_PLAYERS){setMsg('Room '+code.toUpperCase()+' is full ('+MAX_PLAYERS+' players).');return}
+      if(info.st){setMsg('That match has already started. Ask the host to go back to the lobby.');return}
       mode=info.md;
     }
     setMsg(t==='create'?'Creating room…':'Joining room…');
@@ -649,10 +785,15 @@ async function enter(){
         return;
       }
     }
-    setHue(freeHue(getPlayers()));
     myCode=code;roomLabel='Room '+code.toUpperCase();
+    mp=true;iCreated=(t==='create');lastMid=null;
+    resetMatchState();
+    mySince=Date.now();
+    setHue(freeHue(getMembers()));
     setMsg('');
-    startGame();
+    setState('lobby');
+    syncPresence();
+    renderLobby();
   }finally{
     btn.disabled=false;
   }
@@ -887,8 +1028,8 @@ var rowsEl=$('rows'),hintEl=$('boardHint');
 function updateBoard(players){
   var list=[],i;
   for(i=0;i<players.length;i++)list.push({name:players[i].s.name,hue:players[i].s.hue,score:players[i].s.score,alive:players[i].s.alive&&!players[i].idle,me:players[i].s.sameTab});
-  if(state!=='menu'&&room&&!hasSelf(players))list.push({name:cleanName(myName)||'Player',hue:myHue,score:me.eaten*10,alive:me.alive,me:true});
-  if(!room&&state!=='menu')list.push({name:cleanName(myName)||'Player',hue:myHue,score:me.eaten*10,alive:me.alive,me:true});
+  if(inGame()&&room&&!hasSelf(players))list.push({name:cleanName(myName)||'Player',hue:myHue,score:myScore(),alive:me.alive,me:true});
+  if(!room&&inGame())list.push({name:cleanName(myName)||'Player',hue:myHue,score:myScore(),alive:me.alive,me:true});
   list.sort(function(a,b){return b.score-a.score});
   rowsEl.textContent='';
   for(i=0;i<list.length&&i<MAX_PLAYERS;i++){
@@ -908,13 +1049,54 @@ function updateBoard(players){
   }else rc.hidden=true;
   hintEl.textContent=(myCode&&room&&connected&&list.length<=1)?'Waiting for friends. Share the room code, up to '+MAX_PLAYERS+' can play.':'';
   updateNet();
+  if(state==='lobby')renderLobby();
+  if(state==='over'&&mp)renderFinal();
+}
+function renderLobby(){
+  var ms=getMembers(),host=lobbyHost(ms),amHost=!!(host&&host.s.sameTab),list=$('lobbyList'),i;
+  ms.sort(function(a,b){return (b===host)-(a===host)||a.s.since-b.s.since||(a.s.peer<b.s.peer?-1:1)});
+  list.textContent='';
+  for(i=0;i<ms.length&&i<MAX_PLAYERS;i++){
+    var it=ms[i],li=document.createElement('li');if(it.s.sameTab)li.className='me';
+    var sw=document.createElement('span');sw.className='sw2';sw.style.background='hsl('+it.s.hue+' 85% 58%)';
+    var nm=document.createElement('span');nm.className='nm';nm.textContent=it.s.name+(it.s.sameTab?' (you)':'');
+    var tg=document.createElement('span');tg.className='tag';tg.textContent=it===host?'Host':'';
+    li.appendChild(sw);li.appendChild(nm);li.appendChild(tg);list.appendChild(li);
+  }
+  var allIn=true;
+  for(i=0;i<ms.length;i++)if(ms[i].s.g!==0)allIn=false;
+  var ready=ms.length>=2&&allIn;
+  $('lobbyCode').textContent=myCode.toUpperCase();
+  $('lobbyCount').textContent=Math.min(ms.length,MAX_PLAYERS)+' of '+MAX_PLAYERS+' joined';
+  $('startMatch').hidden=!amHost;
+  $('startMatch').disabled=!ready;
+  $('waitNote').textContent=amHost?(ms.length<2?'Waiting for players. Share the room code.':(ready?'Everyone is here. Start when you are ready.':'Waiting for everyone to return to the lobby.')):'Waiting for the host to start the match.';
+}
+function updateClock(now){
+  var left=-1;
+  if(matchOn)left=Math.max(0,matchEnd-now);
+  else if(state==='count')left=MATCH_MS;
+  var on=left>=0;
+  appEl.setAttribute('data-match',on?'1':'0');
+  if(on){
+    var sec=Math.ceil(left/1000),el=$('time');
+    el.textContent=Math.floor(sec/60)+':'+('0'+(sec%60)).slice(-2);
+    el.className='val'+(sec<=30?' warn':'');
+  }
+  var big='',small='';
+  if(state==='count'){big=String(Math.max(1,Math.ceil((countEnd-now)/1000)));small='Get ready'}
+  else if(state==='dead'&&matchOn){small=deathMsg+'. Respawning…'}
+  var bt=$('bigText'),st=$('smallText');
+  $('banner').hidden=!(big||small);
+  if(bt.textContent!==big)bt.textContent=big;
+  if(st.textContent!==small)st.textContent=small;
 }
 
 /* ---------- input ---------- */
 window.addEventListener('keydown',function(e){
   var t=e.target&&e.target.tagName;
   if(state==='play'&&me.alive&&KEYS[e.key]&&t!=='INPUT'){enqueue(KEYS[e.key]);e.preventDefault();return}
-  if(state==='over'&&appEl.getAttribute('data-lb')!=='1'&&(e.key==='Enter'||e.key===' ')&&t!=='INPUT'&&t!=='BUTTON'){startGame();e.preventDefault()}
+  if(state==='over'&&!mp&&appEl.getAttribute('data-lb')!=='1'&&(e.key==='Enter'||e.key===' ')&&t!=='INPUT'&&t!=='BUTTON'){startGame();e.preventDefault()}
   if(e.key==='Escape'&&appEl.getAttribute('data-lb')==='1')toggleLb(false);
 });
 /* swipe anywhere on the stage, so a thumb doesn't have to cover the arena */
@@ -980,11 +1162,13 @@ TYPES.forEach(function(p){
 });
 paintType();
 
-$('copyCode').addEventListener('click',function(){
-  var b=this,c=myCode.toUpperCase();
+function copyCodeTo(b){
+  var c=myCode.toUpperCase();
   function done(t){b.textContent=t;setTimeout(function(){b.textContent='Copy'},1500)}
   try{navigator.clipboard.writeText(c).then(function(){done('Copied')},function(){done(c)})}catch(e){done(c)}
-});
+}
+$('copyCode').addEventListener('click',function(){copyCodeTo(this)});
+$('copyCode2').addEventListener('click',function(){copyCodeTo(this)});
 
 function toggleLb(on){
   appEl.setAttribute('data-lb',on?'1':'0');
@@ -997,16 +1181,31 @@ $('lbClose').addEventListener('click',function(){toggleLb(false)});
 
 $('play').addEventListener('click',enter);
 $('again').addEventListener('click',startGame);
-$('menu').addEventListener('click',async function(){
-  me.alive=false;
+async function goMenu(){
+  me.alive=false;matchOn=false;
   setState('menu');setMsg('');
   await leaveRoom();
+}
+$('menu').addEventListener('click',goMenu);
+$('leaveLobby').addEventListener('click',goMenu);
+$('startMatch').addEventListener('click',startMatch);
+$('toLobby').addEventListener('click',function(){
+  resetMatchState();
+  if(lobby&&myCode){var pp={rc:myCode,md:roomMode};if(iCreated)pp.st=null;ghost(lobby.presence(pp))}
+  setState('lobby');
+  syncPresence();renderLobby();
 });
 
 /* ---------- loop ---------- */
 var last=performance.now(),boardAt=0,hueAt=0;
 function frame(now){
   var dt=Math.min(now-last,250);last=now;frameNo++;
+  if(mp&&room&&state==='lobby'){
+    var hm=lobbyHost(getMembers());
+    if(hm&&!hm.s.sameTab&&hm.s.mid&&hm.s.mid!==lastMid)beginCountdown(hm.s.mid);
+  }
+  if(state==='count'&&now>=countEnd)beginMatch();
+  if(matchOn&&now>=matchEnd)endMatch();
   if(state==='play'&&me.alive){
     tickAcc+=dt;
     var iv=interval(),steps=0;
@@ -1014,7 +1213,7 @@ function frame(now){
     if(tickAcc>iv*3)tickAcc=0;
   }
   var players=getPlayers(),hi=hostInfo(players);
-  var host=!!(hi&&hi.isMe&&state!=='menu');
+  var host=!!(hi&&hi.isMe&&inGame());
   if(host){
     if(!wasHost){myFood=foodCache.slice();hostTotal=etCache}
     hostDuty(players);
@@ -1025,18 +1224,19 @@ function frame(now){
   wasHost=host;
   var orbs=orbsNow(players,hi);
   draw(players,orbs,now,dt);
-  $('score').textContent=state!=='menu'?me.eaten*10:0;
+  $('score').textContent=inGame()?myScore():0;
   $('best').textContent=best;
+  updateClock(now);
   if(state!=='menu'&&room&&now-hueAt>400){
     hueAt=now;
-    var self=null,i;
-    for(i=0;i<players.length;i++)if(players[i].s.sameTab)self=players[i].s;
+    var pool=getMembers(),self=null,i;
+    for(i=0;i<pool.length;i++)if(pool[i].s.sameTab)self=pool[i].s;
     var mySinceV=self?self.since:mySince,myPeer=self?self.peer:'~';
-    for(i=0;i<players.length;i++){
-      var o=players[i];
+    for(i=0;i<pool.length;i++){
+      var o=pool[i];
       if(o.s.sameTab||o.idle||o.s.hue!==myHue)continue;
       if(o.s.since<mySinceV||(o.s.since===mySinceV&&o.s.peer<myPeer)){
-        var nh=freeHue(players);
+        var nh=freeHue(pool);
         if(nh!==myHue){setHue(nh);syncPresence()}
         break;
       }
