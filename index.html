@@ -1,5 +1,6 @@
 <title>Deepglow</title>
-<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#050a14">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@600;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
@@ -19,7 +20,7 @@
   --font-mono:'JetBrains Mono',ui-monospace,Menlo,monospace;
   color-scheme:dark;
 }
-html,body{height:100%}
+html,body{height:100%;width:100%;min-width:0}
 body{
   margin:0;overflow:hidden;background:var(--abyss);color:var(--ink);
   font:500 14px/1.4 var(--font-mono);
@@ -109,12 +110,58 @@ input[type=text]::placeholder{color:var(--dim)}
 .lbList li.gap{display:block;text-align:center;color:var(--dim);padding:0}
 
 @media (max-width:760px){
-  .play{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr) auto;gap:10px}
-  .board ol{max-height:84px;overflow:auto}
-  .board{padding:8px 10px}
+  body{padding-left:max(8px,env(safe-area-inset-left,0px));padding-right:max(8px,env(safe-area-inset-right,0px))}
+  .app{gap:6px}
+  .top{padding-top:6px;gap:6px 10px}
+  .brand{font-size:16px}
+  .stats{gap:10px}
+  .lab{font-size:9px}
+  .val{font-size:17px}
+  .val.small{font-size:16px}
+  .right{gap:6px;max-width:100%}
+  .net{font-size:10px;gap:5px}
+  .chip{font-size:10px;padding:5px 7px}
+  .play{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr) auto;gap:6px;padding-bottom: max(6px,env(safe-area-inset-bottom,0px))}
+  .stage{min-height:0;width:100%;height:100%}
+  .arena{max-width:100%;max-height:100%;touch-action:none}
+  .board ol{max-height:56px;overflow:auto}
+  .board{padding:6px 8px}
+  .board h2{margin-bottom:5px}
   .hint{display:none}
-  .stats{gap:14px}
-  .val{font-size:20px}
+  .panel{padding:18px 14px;gap:12px}
+  .rules{font-size:11px}
+}
+@media (max-height:700px) and (max-width:760px){
+  .top{padding-top:4px}
+  .play{gap:4px}
+  .board{padding:4px 7px}
+  .board ol{max-height:38px}
+  .panel{padding:14px 12px;gap:10px}
+}
+/* Android/mobile viewport and touch layout */
+@media (max-width:760px){
+  body{font-size:12px}
+  .app{height:100dvh;min-height:0}
+  .top{flex:0 0 auto;display:grid;grid-template-columns:auto 1fr;align-items:center}
+  .stats{justify-content:flex-end;gap:clamp(7px,2.4vw,14px)}
+  .right{grid-column:1 / -1;justify-content:space-between;width:100%}
+  .play{min-height:0;grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr) auto}
+  .stage{min-width:0;min-height:0;overflow:hidden}
+  .arena{width:min(100%, calc(100dvh - 170px));aspect-ratio:1/1;max-width:100%;max-height:100%}
+  #c{width:100%;height:100%}
+  .overlay{position:absolute;inset:0;overflow-y:auto;overscroll-behavior:contain;align-items:start;padding:10px}
+  .panel{width:min(440px,100%);margin:auto;padding:16px 14px;gap:11px}
+  .swatches{gap:8px}
+  .sw{width:clamp(25px,7vw,32px);height:clamp(25px,7vw,32px)}
+  .btn{padding:12px 10px}
+}
+@media (max-width:380px){
+  .brand{font-size:14px}
+  .val{font-size:15px}
+  .lab{font-size:8px}
+  .net{font-size:9px}
+  .panel{padding:12px 10px}
+  .rules{gap:5px 8px;font-size:10px}
 }
 </style>
 
@@ -376,7 +423,7 @@ var MODES={
   rush:{label:'Rush',wrap:false,base:85,min:48,desc:'Walls are deadly and everything is much faster.'}
 };
 var MODE_KEYS=['classic','portal','rush'];
-var IDLE_MS=5000,MAX_PLAYERS=8,MAX_APPLES=8;
+var IDLE_MS=5000,MAX_PLAYERS=2,MAX_APPLES=8;
 var FONT="'JetBrains Mono', ui-monospace, monospace";
 var TAU=Math.PI*2;
 
@@ -632,6 +679,13 @@ function die(reason,who){
   updateRankNote();
   setTimeout(function(){if(state==='dead')setState('over')},450);
 }
+function predictedHead(s){
+  if(!s||!s.alive||!s.cells||!s.cells.length)return null;
+  var h=s.cells[0],d=DIRS[s.dir]||DIRS.r,x=h.x+d.x,y=h.y+d.y;
+  if(roomWrap){x=(x+N)%N;y=(y+N)%N}
+  else if(x<0||y<0||x>=N||y>=N)return null;
+  return {x:x,y:y};
+}
 function tick(){
   var players=getPlayers(),hi=hostInfo(players),i,j,c=cfg();
   if(me.queue.length)me.dir=me.queue.shift();
@@ -642,7 +696,13 @@ function tick(){
     for(i=0;i<players.length;i++){
       var pl=players[i];
       if(pl.s.sameTab||!pl.s.alive||pl.idle)continue;
+      /* Check the last received body AND the opponent's next likely head cell.
+         This reduces missed collisions when mobile network packets arrive between ticks. */
       for(j=0;j<pl.s.cells.length;j++)if(pl.s.cells[j].x===nx&&pl.s.cells[j].y===ny){die('player',pl.s.name);return}
+      var ph=predictedHead(pl.s);
+      if(ph&&ph.x===nx&&ph.y===ny){die('player',pl.s.name);return}
+      /* Catch near-simultaneous head-to-head crossings using our next cell. */
+      if(pl.s.cells.length&&pl.s.cells[0].x===nx&&pl.s.cells[0].y===ny){die('player',pl.s.name);return}
     }
   }
   var lim=me.body.length-(me.grow>0?0:1);
@@ -739,9 +799,9 @@ async function enter(){
       await sleep(800);
       var pl=getPlayers(),others=0;
       for(var i=0;i<pl.length;i++)if(!pl[i].s.sameTab&&!pl[i].idle)others++;
-      if(others>=MAX_PLAYERS){
+      if(others>=MAX_PLAYERS-1){
         if(pub&&attempt<3){attempt++;skip=+name.split('-')[2];name=pickArena(m,skip);continue}
-        setMsg(pub?'Every open arena is full right now. Try again in a moment.':'That room is full ('+MAX_PLAYERS+' players). Pick another code.');
+        setMsg(pub?'Every open arena is full right now. Try again in a moment.':'That room is full (maximum 2 players). Pick another code.');
         await leaveRoom();
         return;
       }
@@ -975,10 +1035,13 @@ function draw(players,orbs,t,dt){
 /* ---------- layout ---------- */
 function layout(){
   var r=stageEl.getBoundingClientRect();
-  size=Math.max(150,Math.floor(Math.min(r.width,r.height)));
+  /* Fit the square board to the actual visible stage; never force a 150px minimum
+     that can overflow on narrow/short mobile screens. */
+  size=Math.max(1,Math.floor(Math.min(r.width,r.height)));
   arenaEl.style.width=size+'px';arenaEl.style.height=size+'px';
-  DPR=Math.min(window.devicePixelRatio||1,2);
-  cv.width=Math.round(size*DPR);cv.height=Math.round(size*DPR);
+  DPR=Math.min(window.devicePixelRatio||1,1.5);
+  var w=Math.round(size*DPR);
+  if(cv.width!==w||cv.height!==w){cv.width=w;cv.height=w;}
   cell=size/N;
 }
 if(window.ResizeObserver)new ResizeObserver(layout).observe(stageEl);
